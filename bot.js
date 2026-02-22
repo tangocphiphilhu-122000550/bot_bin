@@ -227,15 +227,20 @@ console.log('🤖 BIN Bot is running...');
 const PORT = process.env.PORT || 8080;
 
 const server = http.createServer((req, res) => {
-    if (req.method === 'HEAD' || req.method === 'GET') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        if (req.method === 'GET') {
-            res.end(JSON.stringify({ status: 'ok', bot: 'running', uptime: process.uptime() }));
+    if (req.url === '/health' || req.url === '/') {
+        if (req.method === 'HEAD' || req.method === 'GET') {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            if (req.method === 'GET') {
+                res.end(JSON.stringify({ status: 'ok', bot: 'running', uptime: process.uptime() }));
+            } else {
+                res.end();
+            }
         } else {
+            res.writeHead(405);
             res.end();
         }
     } else {
-        res.writeHead(405);
+        res.writeHead(404);
         res.end();
     }
 });

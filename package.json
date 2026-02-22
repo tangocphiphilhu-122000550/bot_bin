@@ -1,15 +1,14 @@
 {
-  "name": "bincheck",
-  "version": "0.1.0",
-  "private": true,
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start"
-  },
-  "dependencies": {
-    "next": "16.1.6",
-    "react": "19.2.3",
-    "react-dom": "19.2.3"
-  }
+    "name": "binbot",
+    "version": "1.0.0",
+    "description": "Telegram BIN Generator & Lookup Bot",
+    "main": "bot.js",
+    "scripts": {
+        "start": "node bot.js",
+        "dev": "node --watch bot.js"
+    },
+    "dependencies": {
+        "node-telegram-bot-api": "^0.66.0",
+        "dotenv": "^16.4.7"
+    }
 }

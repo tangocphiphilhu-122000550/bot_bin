@@ -1,5 +1,6 @@
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
+const http = require('http');
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
 
@@ -221,3 +222,24 @@ bot.setMyCommands([
 ]);
 
 console.log('🤖 BIN Bot is running...');
+
+// ==================== HEALTH CHECK API ====================
+const PORT = process.env.PORT || 8080;
+
+const server = http.createServer((req, res) => {
+    if (req.method === 'HEAD' || req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        if (req.method === 'GET') {
+            res.end(JSON.stringify({ status: 'ok', bot: 'running', uptime: process.uptime() }));
+        } else {
+            res.end();
+        }
+    } else {
+        res.writeHead(405);
+        res.end();
+    }
+});
+
+server.listen(PORT, () => {
+    console.log(`✅ Health check API running on port ${PORT}`);
+});

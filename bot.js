@@ -216,7 +216,15 @@ bot.onText(/\/gen(?:@\w+)?\s+(.+)/, (msg, match) => {
     bot.sendMessage(msg.chat.id, message, { parse_mode: 'Markdown' });
 });
 
-// /bin <BIN>
+// Handle /gen with no args
+bot.onText(/^\/gen(?:@\w+)?$/, (msg) => {
+    bot.sendMessage(msg.chat.id,
+        '❌ Thiếu BIN prefix.\n\nCách dùng: `/gen <BIN> [số lượng] [MM|YY] [CVV]`\nVí dụ: `/gen 453201 10` hoặc `/gen 37435512226 10`',
+        { parse_mode: 'Markdown' }
+    );
+});
+
+// /check <BIN> - Basic BIN lookup using binlist.net
 bot.onText(/\/check(?:@\w+)?\s+(\d+)/, async (msg, match) => {
     const bin = match[1];
 
@@ -259,14 +267,6 @@ bot.onText(/\/check(?:@\w+)?\s+(\d+)/, async (msg, match) => {
         message_id: waitMsg.message_id,
         parse_mode: 'Markdown',
     });
-});
-
-// Handle /gen with no args
-bot.onText(/^\/gen(?:@\w+)?$/, (msg) => {
-    bot.sendMessage(msg.chat.id,
-        '❌ Thiếu BIN prefix.\n\nCách dùng: `/gen <BIN> [số lượng] [MM|YY] [CVV]`\nVí dụ: `/gen 453201 10` hoặc `/gen 37435512226 10`',
-        { parse_mode: 'Markdown' }
-    );
 });
 
 // Handle /check with no args

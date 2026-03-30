@@ -1,0 +1,15 @@
+{
+    "name": "binbot",
+    "version": "1.0.0",
+    "description": "Telegram BIN Generator & Lookup Bot",
+    "main": "bot.js",
+    "scripts": {
+        "start": "node bot.js",
+        "dev": "node --watch bot.js"
+    },
+    "dependencies": {
+        "node-telegram-bot-api": "^0.66.0",
+        "dotenv": "^16.4.7",
+        "axios": "^1.6.0"
+    }
+}

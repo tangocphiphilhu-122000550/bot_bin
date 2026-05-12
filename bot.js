@@ -1,11 +1,16 @@
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const http = require('http');
+const cheerio = require('cheerio');
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
 
-const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || 'ce8703e988mshc81fb8ebd23b098p1bc5b6jsnca838140df08';
-const RAPIDAPI_HOST = 'bin-ip-checker.p.rapidapi.com';
+// Store generated cards temporarily for check live feature
+const generatedCardsStore = new Map();
+
+// Check Live API config
+const CHECK_LIVE_URL = 'https://sxglrllialxihqowmqwh.supabase.co/functions/v1/check-card';
+const CHECK_LIVE_APIKEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN4Z2xybGxpYWx4aWhxb3dtcXdoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgxMjE2NjQsImV4cCI6MjA4MzY5NzY2NH0.mCivzbRAqNkJ1BA8ag4mt6vHlUjV5lWUguhGb4mmKc0';
 
 // ==================== UTILS ====================
 
@@ -67,71 +72,67 @@ function generateCards(binPrefix, count = 10, fixedExpiry = '', fixedCVV = '') {
 
 async function lookupBIN(bin) {
     try {
-        const res = await fetch(`https://lookup.binlist.net/${bin}`, {
-            headers: { 'Accept-Version': '3', 'Accept': 'application/json' },
+        const res = await fetch(`https://bincheck.io/vi/details/${bin}`, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'vi,en-US;q=0.7,en;q=0.3',
+            },
         });
         if (!res.ok) {
             if (res.status === 404) return { error: 'Không tìm thấy BIN.' };
             if (res.status === 429) return { error: 'Quá nhiều yêu cầu. Vui lòng thử lại sau.' };
             return { error: 'Tra cứu thất bại.' };
         }
-        return await res.json();
+        const html = await res.text();
+        const $ = cheerio.load(html);
+
+        // Extract from meta description: "Con số này: 415464 là một số BIN hợp lệ VISA Do KHALEEJI BANK B.S.C trong BAHRAIN"
+        const description = $('meta[name="description"]').attr('content') || '';
+        
+        // Parse description pattern: "... là một số BIN hợp lệ {SCHEME} Do {BANK} trong {COUNTRY}"
+        const descMatch = description.match(/là một số BIN hợp lệ\s+(.+?)\s+Do\s+(.+?)\s+trong\s+(.+)/i);
+        
+        let scheme = 'N/A';
+        let bankName = 'N/A';
+        let country = 'N/A';
+
+        if (descMatch) {
+            scheme = descMatch[1].trim() || 'N/A';
+            bankName = descMatch[2].trim() || 'N/A';
+            country = descMatch[3].trim() || 'N/A';
+        }
+
+        // If all fields are empty or title indicates not found, return error
+        const title = $('title').text() || '';
+        if (!descMatch || (scheme === 'N/A' && bankName === 'N/A' && country === 'N/A') || title.includes('không được tìm thấy')) {
+            return { error: 'Không tìm thấy BIN trong cơ sở dữ liệu.' };
+        }
+
+        return { scheme, bankName, country };
     } catch {
         return { error: 'Dịch vụ không khả dụng.' };
     }
 }
 
-// RapidAPI BIN Checker
-async function checkBINAdvanced(bin) {
+async function checkCardLive(cardString) {
     try {
-        const res = await fetch(`https://${RAPIDAPI_HOST}/?bin=${bin}`, {
-            method: 'GET',
+        const res = await fetch(CHECK_LIVE_URL, {
+            method: 'POST',
             headers: {
-                'x-rapidapi-key': RAPIDAPI_KEY,
-                'x-rapidapi-host': RAPIDAPI_HOST,
-                'Content-Type': 'application/json'
-            }
+                'Content-Type': 'application/json',
+                'apikey': CHECK_LIVE_APIKEY,
+                'Authorization': `Bearer ${CHECK_LIVE_APIKEY}`,
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
+                'Origin': 'https://madleets.me',
+                'Referer': 'https://madleets.me/',
+            },
+            body: JSON.stringify({ card: cardString }),
         });
-        if (!res.ok) return { error: 'Tra cứu thất bại.' };
+        if (!res.ok) return { status: 'Error', message: `HTTP ${res.status}` };
         return await res.json();
     } catch {
-        return { error: 'Dịch vụ không khả dụng.' };
-    }
-}
-
-// RapidAPI BIN + IP Checker
-async function checkBINWithIP(bin, ip) {
-    try {
-        const res = await fetch(`https://${RAPIDAPI_HOST}/?bin=${bin}&ip=${ip}`, {
-            method: 'GET',
-            headers: {
-                'x-rapidapi-key': RAPIDAPI_KEY,
-                'x-rapidapi-host': RAPIDAPI_HOST,
-                'Content-Type': 'application/json'
-            }
-        });
-        if (!res.ok) return { error: 'Tra cứu thất bại.' };
-        return await res.json();
-    } catch {
-        return { error: 'Dịch vụ không khả dụng.' };
-    }
-}
-
-// RapidAPI IP Lookup
-async function checkIP(ip) {
-    try {
-        const res = await fetch(`https://${RAPIDAPI_HOST}/ip-lookup?ip=${ip}`, {
-            method: 'GET',
-            headers: {
-                'x-rapidapi-key': RAPIDAPI_KEY,
-                'x-rapidapi-host': RAPIDAPI_HOST,
-                'Content-Type': 'application/json'
-            }
-        });
-        if (!res.ok) return { error: 'Tra cứu thất bại.' };
-        return await res.json();
-    } catch {
-        return { error: 'Dịch vụ không khả dụng.' };
+        return { status: 'Error', message: 'Không thể kết nối API.' };
     }
 }
 
@@ -147,17 +148,12 @@ Các lệnh hỗ trợ:
 🔹 \`/gen <BIN>\` — Tạo 10 thẻ ngẫu nhiên
 🔹 \`/gen <BIN> <số lượng>\` — Tạo theo số lượng
 🔹 \`/gen <BIN> <số lượng> <MM|YY> <CVV>\` — Cố định ngày hết hạn & CVV
-🔹 \`/check <BIN>\` — Tra cứu thông tin BIN (binlist.net)
-🔹 \`/bin <BIN>\` — Tra cứu BIN chi tiết (RapidAPI)
-🔹 \`/binip <BIN> <IP>\` — Kiểm tra BIN + IP
-🔹 \`/ip <IP>\` — Tra cứu thông tin IP
+🔹 \`/check <BIN>\` — Tra cứu thông tin BIN
 
 *Ví dụ:*
 \`/gen 453201\`
 \`/gen 37435512226 20\`
-\`/bin 448590\`
-\`/binip 448590 2.56.188.79\`
-\`/ip 2.56.188.79\`
+\`/check 453201\`
     `.trim();
 
     bot.sendMessage(msg.chat.id, welcome, { parse_mode: 'Markdown' });
@@ -213,7 +209,21 @@ bot.onText(/\/gen(?:@\w+)?\s+(.+)/, (msg, match) => {
 
     const message = `${header}${divider}\n${lines}\n${divider}`;
 
-    bot.sendMessage(msg.chat.id, message, { parse_mode: 'Markdown' });
+    // Generate unique ID and store cards for check live
+    const storeId = `${msg.chat.id}_${Date.now()}`;
+    generatedCardsStore.set(storeId, cards);
+
+    // Auto-cleanup after 10 minutes
+    setTimeout(() => generatedCardsStore.delete(storeId), 10 * 60 * 1000);
+
+    bot.sendMessage(msg.chat.id, message, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: '⚡ Check Live', callback_data: `checklive_${storeId}` }]
+            ]
+        }
+    });
 });
 
 // Handle /gen with no args
@@ -224,13 +234,12 @@ bot.onText(/^\/gen(?:@\w+)?$/, (msg) => {
     );
 });
 
-// /check <BIN> - Basic BIN lookup using binlist.net
+// /check <BIN> - BIN lookup using bincheck.io
 bot.onText(/\/check(?:@\w+)?\s+(\d+)/, async (msg, match) => {
     const bin = match[1];
 
     const waitMsg = await bot.sendMessage(msg.chat.id, '🔍 Đang tra cứu BIN...', { parse_mode: 'Markdown' });
 
-    // Use first 6-8 digits for lookup
     const lookupBin = bin.substring(0, Math.min(8, bin.length));
     const data = await lookupBIN(lookupBin);
 
@@ -241,25 +250,11 @@ bot.onText(/\/check(?:@\w+)?\s+(\d+)/, async (msg, match) => {
         });
     }
 
-    const scheme = data.scheme || 'Unknown';
-    const type = data.type || 'N/A';
-    const brand = data.brand || 'N/A';
-    const prepaid = data.prepaid === true ? '✅ Yes' : data.prepaid === false ? '❌ No' : 'N/A';
-    const country = data.country ? `${data.country.emoji || ''} ${data.country.name || 'N/A'}` : 'N/A';
-    const bankName = data.bank?.name || 'N/A';
-    const bankUrl = data.bank?.url || '';
-    const bankPhone = data.bank?.phone || '';
-
     let info = `🔍 *Tra cứu BIN*\n━━━━━━━━━━━━━━━━━━━━\n`;
     info += `📌 BIN: \`${lookupBin}\`\n`;
-    info += `💳 Thương hiệu: *${scheme.toUpperCase()}*\n`;
-    info += `📋 Loại thẻ: ${type}\n`;
-    info += `🏷 Hạng thẻ: ${brand}\n`;
-    info += `💰 Trả trước: ${prepaid}\n`;
-    info += `🌍 Quốc gia: ${country}\n`;
-    info += `🏦 Ngân hàng: ${bankName}\n`;
-    if (bankUrl) info += `🌐 Website: ${bankUrl}\n`;
-    if (bankPhone) info += `📞 SĐT: ${bankPhone}\n`;
+    info += `💳 Thương hiệu: *${data.scheme}*\n`;
+    info += `🌍 Quốc gia: ${data.country}\n`;
+    info += `🏦 Ngân hàng: ${data.bankName}\n`;
     info += `━━━━━━━━━━━━━━━━━━━━`;
 
     bot.editMessageText(info, {
@@ -277,183 +272,98 @@ bot.onText(/^\/check(?:@\w+)?$/, (msg) => {
     );
 });
 
-// /bin <BIN> - RapidAPI Advanced BIN Check
-bot.onText(/\/bin(?:@\w+)?\s+(\d+)/, async (msg, match) => {
-    const bin = match[1];
+// ==================== CHECK LIVE CALLBACK ====================
+bot.on('callback_query', async (callbackQuery) => {
+    const data = callbackQuery.data;
+    const chatId = callbackQuery.message.chat.id;
+    const messageId = callbackQuery.message.message_id;
 
-    const waitMsg = await bot.sendMessage(msg.chat.id, '🔍 Đang tra cứu BIN...', { parse_mode: 'Markdown' });
+    if (!data.startsWith('checklive_')) return;
 
-    const result = await checkBINAdvanced(bin);
+    const storeId = data.replace('checklive_', '');
+    const cards = generatedCardsStore.get(storeId);
 
-    if (result.error) {
-        return bot.editMessageText(`❌ ${result.error}`, {
-            chat_id: msg.chat.id,
-            message_id: waitMsg.message_id,
+    if (!cards) {
+        return bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Dữ liệu đã hết hạn. Vui lòng /gen lại.', show_alert: true });
+    }
+
+    // Remove the button after clicking
+    bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: chatId, message_id: messageId });
+    bot.answerCallbackQuery(callbackQuery.id, { text: '⚡ Đang check live...' });
+
+    // Send initial status message
+    const statusMsg = await bot.sendMessage(chatId, '⏳ *Đang kiểm tra cards...*\n\n`0/' + cards.length + '` đã check', { parse_mode: 'Markdown' });
+
+    let liveCards = [];
+    let deadCards = [];
+    let errorCards = [];
+
+    for (let i = 0; i < cards.length; i++) {
+        const c = cards[i];
+        // Format: number|month|year|cvv
+        const [month, year] = c.expiry.split('|');
+        const cardString = `${c.number}|${month}|20${year}|${c.cvv}`;
+
+        const result = await checkCardLive(cardString);
+
+        if (result.status === 'Live') {
+            liveCards.push({ card: cardString, message: result.message });
+            console.log(`✅ [${i + 1}/${cards.length}] LIVE: ${cardString}`);
+        } else if (result.status === 'Dead') {
+            deadCards.push({ card: cardString, message: result.message });
+            console.log(`❌ [${i + 1}/${cards.length}] DEAD: ${cardString}`);
+        } else {
+            errorCards.push({ card: cardString, message: result.message });
+            console.log(`⚠️ [${i + 1}/${cards.length}] ERROR: ${cardString} - ${result.message}`);
+        }
+
+        // Update progress every card
+        const progress = `⏳ *Đang kiểm tra cards...*\n\n\`${i + 1}/${cards.length}\` đã check\n✅ Live: ${liveCards.length} | ❌ Dead: ${deadCards.length}`;
+        bot.editMessageText(progress, {
+            chat_id: chatId,
+            message_id: statusMsg.message_id,
+            parse_mode: 'Markdown',
+        }).catch(() => {});
+
+        // Small delay to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+
+    // Final result
+    let finalMsg = `⚡ *Kết quả Check Live*\n━━━━━━━━━━━━━━━━━━━━\n`;
+    finalMsg += `📊 Tổng: ${cards.length} | ✅ Live: ${liveCards.length} | ❌ Dead: ${deadCards.length}\n`;
+    finalMsg += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+    if (liveCards.length > 0) {
+        finalMsg += `✅ *LIVE CARDS:*\n`;
+        liveCards.forEach(c => {
+            finalMsg += `\`${c.card}\`\n`;
+        });
+        finalMsg += `\n`;
+    }
+
+    if (deadCards.length > 0) {
+        finalMsg += `❌ *DEAD CARDS:*\n`;
+        deadCards.forEach(c => {
+            finalMsg += `\`${c.card}\`\n`;
         });
     }
 
-    if (!result.success || !result.BIN) {
-        return bot.editMessageText('❌ Không tìm thấy thông tin BIN.', {
-            chat_id: msg.chat.id,
-            message_id: waitMsg.message_id,
-        });
-    }
-
-    const b = result.BIN;
-    let info = `🔍 *Tra cứu BIN (RapidAPI)*\n━━━━━━━━━━━━━━━━━━━━\n`;
-    info += `📌 BIN: \`${b.number}\`\n`;
-    info += `💳 Thương hiệu: *${b.scheme || 'N/A'}*\n`;
-    info += `📋 Loại thẻ: ${b.type || 'N/A'}\n`;
-    info += `🏷 Hạng thẻ: ${b.level || 'N/A'}\n`;
-    info += `💰 Trả trước: ${b.is_prepaid === 'true' ? '✅ Yes' : '❌ No'}\n`;
-    info += `🏢 Thương mại: ${b.is_commercial === 'true' ? '✅ Yes' : '❌ No'}\n`;
-    info += `💵 Tiền tệ: ${b.currency || 'N/A'}\n`;
-    info += `🌍 Quốc gia: ${b.country?.flag || ''} ${b.country?.name || 'N/A'}\n`;
-    info += `🏦 Ngân hàng: ${b.issuer?.name || 'N/A'}\n`;
-    info += `━━━━━━━━━━━━━━━━━━━━`;
-
-    bot.editMessageText(info, {
-        chat_id: msg.chat.id,
-        message_id: waitMsg.message_id,
+    bot.editMessageText(finalMsg, {
+        chat_id: chatId,
+        message_id: statusMsg.message_id,
         parse_mode: 'Markdown',
-    });
-});
+    }).catch(() => {});
 
-// /binip <BIN> <IP> - Check BIN with IP
-bot.onText(/\/binip(?:@\w+)?\s+(\d+)\s+([\d\.]+)/, async (msg, match) => {
-    const bin = match[1];
-    const ip = match[2];
-
-    const waitMsg = await bot.sendMessage(msg.chat.id, '🔍 Đang tra cứu BIN + IP...', { parse_mode: 'Markdown' });
-
-    const result = await checkBINWithIP(bin, ip);
-
-    if (result.error) {
-        return bot.editMessageText(`❌ ${result.error}`, {
-            chat_id: msg.chat.id,
-            message_id: waitMsg.message_id,
-        });
-    }
-
-    if (!result.success) {
-        return bot.editMessageText('❌ Không tìm thấy thông tin.', {
-            chat_id: msg.chat.id,
-            message_id: waitMsg.message_id,
-        });
-    }
-
-    const b = result.BIN;
-    const ipData = result.IP;
-
-    let info = `🔍 *Tra cứu BIN + IP*\n━━━━━━━━━━━━━━━━━━━━\n`;
-    
-    // BIN Info
-    info += `\n💳 *Thông tin BIN:*\n`;
-    info += `📌 BIN: \`${b.number}\`\n`;
-    info += `🏷 ${b.scheme} ${b.type} ${b.level}\n`;
-    info += `🌍 ${b.country?.flag} ${b.country?.name}\n`;
-    info += `🏦 ${b.issuer?.name || 'N/A'}\n`;
-    
-    // IP Info
-    info += `\n🌐 *Thông tin IP:*\n`;
-    info += `📍 IP: \`${ipData.IP}\`\n`;
-    info += `🌍 ${ipData.flag} ${ipData.country}\n`;
-    info += `📍 ${ipData.city}, ${ipData.region}\n`;
-    info += `🔒 Proxy: ${ipData.is_proxy ? '⚠️ Yes' : '✅ No'}\n`;
-    info += `🏢 ISP: ${ipData.isp}\n`;
-    
-    // Match Status
-    info += `\n${ipData.IP_BIN_match ? '✅' : '❌'} ${ipData.IP_BIN_match_message || 'N/A'}\n`;
-    info += `━━━━━━━━━━━━━━━━━━━━`;
-
-    bot.editMessageText(info, {
-        chat_id: msg.chat.id,
-        message_id: waitMsg.message_id,
-        parse_mode: 'Markdown',
-    });
-});
-
-// /ip <IP> - IP Lookup
-bot.onText(/\/ip(?:@\w+)?\s+([\d\.]+)/, async (msg, match) => {
-    const ip = match[1];
-
-    const waitMsg = await bot.sendMessage(msg.chat.id, '🔍 Đang tra cứu IP...', { parse_mode: 'Markdown' });
-
-    const result = await checkIP(ip);
-
-    if (result.error) {
-        return bot.editMessageText(`❌ ${result.error}`, {
-            chat_id: msg.chat.id,
-            message_id: waitMsg.message_id,
-        });
-    }
-
-    if (!result.success || !result.IP) {
-        return bot.editMessageText('❌ Không tìm thấy thông tin IP.', {
-            chat_id: msg.chat.id,
-            message_id: waitMsg.message_id,
-        });
-    }
-
-    const ipData = result.IP;
-    let info = `🔍 *Tra cứu IP*\n━━━━━━━━━━━━━━━━━━━━\n`;
-    info += `📍 IP: \`${ipData.IP}\`\n`;
-    info += `🌍 Quốc gia: ${ipData.flag} ${ipData.country}\n`;
-    info += `📍 Vị trí: ${ipData.city}, ${ipData.region}\n`;
-    info += `📮 Zip: ${ipData.zip_code}\n`;
-    info += `🕐 Múi giờ: ${ipData.time_zone}\n`;
-    info += `🔒 Proxy: ${ipData.is_proxy ? '⚠️ Yes' : '✅ No'}\n`;
-    info += `🏢 ISP: ${ipData.isp}\n`;
-    info += `🔢 ASN: ${ipData.asn}\n`;
-    
-    if (ipData.proxy && ipData.is_proxy) {
-        info += `\n⚠️ *Chi tiết Proxy:*\n`;
-        info += `📌 Loại: ${ipData.proxy.type}\n`;
-        info += `🌐 Domain: ${ipData.proxy.domain}\n`;
-        info += `📊 Usage: ${ipData.proxy.usage_type}\n`;
-    }
-    
-    info += `━━━━━━━━━━━━━━━━━━━━`;
-
-    bot.editMessageText(info, {
-        chat_id: msg.chat.id,
-        message_id: waitMsg.message_id,
-        parse_mode: 'Markdown',
-    });
-});
-
-// Handle /bin with no args
-bot.onText(/^\/bin(?:@\w+)?$/, (msg) => {
-    bot.sendMessage(msg.chat.id,
-        '❌ Thiếu số BIN.\n\nCách dùng: `/bin <BIN>`\nVí dụ: `/bin 448590`',
-        { parse_mode: 'Markdown' }
-    );
-});
-
-// Handle /binip with no args
-bot.onText(/^\/binip(?:@\w+)?$/, (msg) => {
-    bot.sendMessage(msg.chat.id,
-        '❌ Thiếu thông tin.\n\nCách dùng: `/binip <BIN> <IP>`\nVí dụ: `/binip 448590 2.56.188.79`',
-        { parse_mode: 'Markdown' }
-    );
-});
-
-// Handle /ip with no args
-bot.onText(/^\/ip(?:@\w+)?$/, (msg) => {
-    bot.sendMessage(msg.chat.id,
-        '❌ Thiếu địa chỉ IP.\n\nCách dùng: `/ip <IP>`\nVí dụ: `/ip 2.56.188.79`',
-        { parse_mode: 'Markdown' }
-    );
+    // Cleanup
+    generatedCardsStore.delete(storeId);
 });
 
 // ==================== STARTUP ====================
 bot.setMyCommands([
     { command: 'start', description: 'Hướng dẫn sử dụng bot' },
     { command: 'gen', description: 'Tạo số thẻ từ BIN prefix' },
-    { command: 'check', description: 'Tra cứu thông tin BIN (binlist.net)' },
-    { command: 'bin', description: 'Tra cứu BIN chi tiết (RapidAPI)' },
-    { command: 'binip', description: 'Kiểm tra BIN + IP' },
-    { command: 'ip', description: 'Tra cứu thông tin IP' },
+    { command: 'check', description: 'Tra cứu thông tin BIN' },
 ]);
 
 console.log('🤖 BIN Bot is running...');

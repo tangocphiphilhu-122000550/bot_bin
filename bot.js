@@ -2,6 +2,7 @@ require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const http = require('http');
 const cheerio = require('cheerio');
+const { COUNTRIES, generateFakeInfo } = require('./countries');
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
 
@@ -14,55 +15,89 @@ const CHECK_LIVE_APIKEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 // ==================== UTILS ====================
 
-function luhnGenerate(partialNumber) {
-    const digits = partialNumber.split('').map(Number);
-    const parity = digits.length % 2;
+function luhnGenerate(prefix, length) {
+    const digits = prefix.split('').map(Number);
+    while (digits.length < length - 1) {
+        digits.push(Math.floor(Math.random() * 10));
+    }
     let sum = 0;
-    for (let i = 0; i < digits.length; i++) {
-        let d = digits[i];
-        if (i % 2 === parity) {
-            d *= 2;
-            if (d > 9) d -= 9;
-        }
-        sum += d;
+    let isEven = true;
+    for (let i = digits.length - 1; i >= 0; i--) {
+        let digit = digits[i];
+        if (isEven) { digit *= 2; if (digit > 9) digit -= 9; }
+        sum += digit;
+        isEven = !isEven;
     }
     const checkDigit = (10 - (sum % 10)) % 10;
-    return partialNumber + checkDigit;
+    return [...digits, checkDigit].join('');
 }
 
-function generateExpiry() {
-    const now = new Date();
-    const currentYear = now.getFullYear() % 100;
-    const yearsAhead = Math.floor(Math.random() * 5) + 1;
-    const year = currentYear + yearsAhead;
-    const month = Math.floor(Math.random() * 12) + 1;
-    return `${String(month).padStart(2, '0')}|${String(year).padStart(2, '0')}`;
+function resolveWildcard(bin) {
+    // Replace each 'x' or 'X' with a random digit
+    return bin.replace(/x/gi, () => String(Math.floor(Math.random() * 10)));
 }
 
-function generateCVV() {
-    return String(Math.floor(Math.random() * 900) + 100);
+function isAmex(bin) {
+    const clean = bin.replace(/x/gi, '0'); // resolve for prefix check
+    return clean.startsWith('34') || clean.startsWith('37');
 }
 
-function generateCards(binPrefix, count = 10, fixedExpiry = '', fixedCVV = '') {
+function generateCards(binInput, count = 10, fixedMonth = '', fixedYear = '', fixedCVV = '') {
     const cards = [];
     const seen = new Set();
-    const cardLength = 16;
-    const remainingLength = cardLength - binPrefix.length - 1;
+    const amex = isAmex(binInput);
+    const cardLength = amex ? 15 : 16;
+
+    const now = new Date();
+    const currentMonth = now.getMonth() + 1;
+    const currentYear = now.getFullYear();
 
     let attempts = 0;
     while (cards.length < count && attempts < count * 20) {
-        let partial = binPrefix;
-        for (let i = 0; i < remainingLength; i++) {
-            partial += Math.floor(Math.random() * 10);
-        }
-        const fullCard = luhnGenerate(partial);
+        // Resolve wildcard x for each card
+        const resolvedBin = resolveWildcard(binInput);
+        const cardNumber = luhnGenerate(resolvedBin, cardLength);
 
-        if (!seen.has(fullCard)) {
-            seen.add(fullCard);
+        if (!seen.has(cardNumber)) {
+            seen.add(cardNumber);
+
+            // Generate expiry
+            let expYear, expMonth;
+            if (fixedYear) {
+                expYear = parseInt(fixedYear, 10);
+            } else {
+                expYear = currentYear + Math.floor(Math.random() * 6);
+            }
+
+            if (fixedMonth) {
+                expMonth = parseInt(fixedMonth, 10);
+                // If fixed month is in the past for current year, bump year
+                if (expYear === currentYear && expMonth < currentMonth) {
+                    expYear += 1;
+                }
+            } else {
+                if (expYear === currentYear) {
+                    // Only generate months from current month onwards
+                    expMonth = currentMonth + Math.floor(Math.random() * (13 - currentMonth));
+                } else {
+                    expMonth = 1 + Math.floor(Math.random() * 12);
+                }
+            }
+
+            // Generate CVV (4 digits for AMEX, 3 for others)
+            let cardCvv;
+            if (fixedCVV) {
+                cardCvv = fixedCVV;
+            } else {
+                cardCvv = amex
+                    ? String(Math.floor(Math.random() * 9000) + 1000)
+                    : String(Math.floor(Math.random() * 900) + 100);
+            }
+
             cards.push({
-                number: fullCard,
-                expiry: fixedExpiry || generateExpiry(),
-                cvv: fixedCVV || generateCVV(),
+                number: cardNumber,
+                expiry: `${String(expMonth).padStart(2, '0')}|${expYear}`,
+                cvv: cardCvv,
             });
         }
         attempts++;
@@ -147,26 +182,33 @@ Các lệnh hỗ trợ:
 
 🔹 \`/gen <BIN>\` — Tạo 10 thẻ ngẫu nhiên
 🔹 \`/gen <BIN> <số lượng>\` — Tạo theo số lượng
-🔹 \`/gen <BIN> <số lượng> <MM|YY> <CVV>\` — Cố định ngày hết hạn & CVV
+🔹 \`/gen <BIN> <số lượng> <MM|YYYY> <CVV>\` — Cố định expiry & CVV
 🔹 \`/check <BIN>\` — Tra cứu thông tin BIN
+🔹 \`/info <country>\` — Gen thông tin giả theo quốc gia
+🔹 \`/info list\` — Xem danh sách quốc gia
+
+*Hỗ trợ:* Wildcard \`x\` trong BIN, AMEX (15 số, CVV 4 chữ số)
 
 *Ví dụ:*
 \`/gen 453201\`
-\`/gen 37435512226 20\`
+\`/gen 4532xx 20\`
+\`/gen 374355 10 06|2028 1234\`
 \`/check 453201\`
+\`/info United States\`
     `.trim();
 
     bot.sendMessage(msg.chat.id, welcome, { parse_mode: 'Markdown' });
 });
 
-// /gen <BIN> [qty] [MM|YY] [CVV]
+// /gen <BIN> [qty] [MM|YYYY] [CVV]
 bot.onText(/\/gen(?:@\w+)?\s+(.+)/, (msg, match) => {
     const args = match[1].trim().split(/\s+/);
-    const bin = args[0].replace(/\D/g, '');
+    // Allow digits and 'x' wildcard
+    const bin = args[0].replace(/[^0-9xX]/g, '');
 
     // Validate BIN
-    if (bin.length < 1 || bin.length >= 16) {
-        return bot.sendMessage(msg.chat.id, '❌ BIN phải từ 1-15 chữ số.', { parse_mode: 'Markdown' });
+    if (bin.length < 6 || bin.length > 16) {
+        return bot.sendMessage(msg.chat.id, '❌ BIN phải từ 6-16 ký tự (số hoặc x).', { parse_mode: 'Markdown' });
     }
 
     // Parse quantity
@@ -174,29 +216,31 @@ bot.onText(/\/gen(?:@\w+)?\s+(.+)/, (msg, match) => {
     if (args[1]) {
         qty = parseInt(args[1], 10);
         if (isNaN(qty) || qty < 1) qty = 10;
-        if (qty > 50) qty = 50;
     }
 
-    // Parse fixed expiry (MM|YY)
-    let fixedExpiry = '';
+    // Parse fixed expiry (MM|YYYY or MM|YY)
+    let fixedMonth = '';
+    let fixedYear = '';
     if (args[2]) {
-        const expMatch = args[2].match(/^(\d{2})\|(\d{2})$/);
+        const expMatch = args[2].match(/^(\d{2})\|(\d{2,4})$/);
         if (expMatch) {
             const month = parseInt(expMatch[1], 10);
             if (month >= 1 && month <= 12) {
-                fixedExpiry = args[2];
+                fixedMonth = expMatch[1];
+                // Support both YY and YYYY
+                fixedYear = expMatch[2].length === 2 ? `20${expMatch[2]}` : expMatch[2];
             }
         }
     }
 
-    // Parse fixed CVV
+    // Parse fixed CVV (3 or 4 digits for AMEX)
     let fixedCVV = '';
-    if (args[3] && /^\d{3}$/.test(args[3])) {
+    if (args[3] && /^\d{3,4}$/.test(args[3])) {
         fixedCVV = args[3];
     }
 
     // Generate cards
-    const cards = generateCards(bin, qty, fixedExpiry, fixedCVV);
+    const cards = generateCards(bin, qty, fixedMonth, fixedYear, fixedCVV);
 
     if (cards.length === 0) {
         return bot.sendMessage(msg.chat.id, '❌ Không thể tạo thẻ.', { parse_mode: 'Markdown' });
@@ -272,6 +316,59 @@ bot.onText(/^\/check(?:@\w+)?$/, (msg) => {
     );
 });
 
+// /info <country> - Generate fake address info
+bot.onText(/\/info(?:@\w+)?\s+(.+)/, (msg, match) => {
+    const input = match[1].trim();
+
+    // Show country list
+    if (input.toLowerCase() === 'list') {
+        const countryList = Object.keys(COUNTRIES).sort();
+        const columns = [];
+        for (let i = 0; i < countryList.length; i += 2) {
+            const row = countryList[i] + (countryList[i + 1] ? `  |  ${countryList[i + 1]}` : '');
+            columns.push(row);
+        }
+        const msg_text = `🌍 *Danh sách quốc gia hỗ trợ:*\n━━━━━━━━━━━━━━━━━━━━\n\`\`\`\n${columns.join('\n')}\n\`\`\`\n\nDùng: \`/info <tên quốc gia>\``;
+        return bot.sendMessage(msg.chat.id, msg_text, { parse_mode: 'Markdown' });
+    }
+
+    // Find country (case-insensitive partial match)
+    const countryName = Object.keys(COUNTRIES).find(
+        c => c.toLowerCase() === input.toLowerCase()
+    ) || Object.keys(COUNTRIES).find(
+        c => c.toLowerCase().includes(input.toLowerCase())
+    );
+
+    if (!countryName) {
+        return bot.sendMessage(msg.chat.id,
+            `❌ Không tìm thấy quốc gia "${input}".\n\nDùng \`/info list\` để xem danh sách.`,
+            { parse_mode: 'Markdown' }
+        );
+    }
+
+    const data = generateFakeInfo(countryName, COUNTRIES[countryName]);
+
+    let info = `🌍 *Fake Info — ${countryName}*\n━━━━━━━━━━━━━━━━━━━━\n`;
+    info += `👤 Tên: \`${data.firstName} ${data.lastName}\`\n`;
+    info += `🏠 Địa chỉ: \`${data.street}\`\n`;
+    info += `🏙 Thành phố: \`${data.city}\`\n`;
+    info += `📍 Bang/Tỉnh: \`${data.state}\`\n`;
+    info += `📮 ZIP: \`${data.zip}\`\n`;
+    info += `📞 SĐT: \`${data.phone}\`\n`;
+    info += `📧 Email: \`${data.email}\`\n`;
+    info += `━━━━━━━━━━━━━━━━━━━━`;
+
+    bot.sendMessage(msg.chat.id, info, { parse_mode: 'Markdown' });
+});
+
+// Handle /info with no args
+bot.onText(/^\/info(?:@\w+)?$/, (msg) => {
+    bot.sendMessage(msg.chat.id,
+        '❌ Thiếu tên quốc gia.\n\nCách dùng: `/info <country>`\nVí dụ: `/info United States`\n\nXem danh sách: `/info list`',
+        { parse_mode: 'Markdown' }
+    );
+});
+
 // ==================== CHECK LIVE CALLBACK ====================
 bot.on('callback_query', async (callbackQuery) => {
     const data = callbackQuery.data;
@@ -300,9 +397,8 @@ bot.on('callback_query', async (callbackQuery) => {
 
     for (let i = 0; i < cards.length; i++) {
         const c = cards[i];
-        // Format: number|month|year|cvv
-        const [month, year] = c.expiry.split('|');
-        const cardString = `${c.number}|${month}|20${year}|${c.cvv}`;
+        // Format: number|month|year|cvv (expiry is already MM|YYYY)
+        const cardString = `${c.number}|${c.expiry}|${c.cvv}`;
 
         const result = await checkCardLive(cardString);
 
@@ -364,6 +460,7 @@ bot.setMyCommands([
     { command: 'start', description: 'Hướng dẫn sử dụng bot' },
     { command: 'gen', description: 'Tạo số thẻ từ BIN prefix' },
     { command: 'check', description: 'Tra cứu thông tin BIN' },
+    { command: 'info', description: 'Gen thông tin giả theo quốc gia' },
 ]);
 
 console.log('🤖 BIN Bot is running...');

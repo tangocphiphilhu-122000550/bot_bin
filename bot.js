@@ -161,6 +161,7 @@ async function checkCardLive(cardString) {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
                 'Origin': 'https://madleets.me',
                 'Referer': 'https://madleets.me/',
+                'x-client-info': 'supabase-js-web/2.90.1',
             },
             body: JSON.stringify({ card: cardString }),
         });
@@ -394,6 +395,7 @@ bot.on('callback_query', async (callbackQuery) => {
     let liveCards = [];
     let deadCards = [];
     let errorCards = [];
+    let serverStats = {};
 
     for (let i = 0; i < cards.length; i++) {
         const c = cards[i];
@@ -402,15 +404,24 @@ bot.on('callback_query', async (callbackQuery) => {
 
         const result = await checkCardLive(cardString);
 
+        // Track server name from message
+        let serverName = 'Unknown';
+        if (result.message) {
+            if (result.message.includes('MaDLeeTs Server')) serverName = 'MaDLeeTs';
+            else if (result.message.includes('Chknet')) serverName = 'Chknet';
+            else if (result.message.includes('MaDLeeTs')) serverName = 'MaDLeeTs';
+        }
+        serverStats[serverName] = (serverStats[serverName] || 0) + 1;
+
         if (result.status === 'Live') {
             liveCards.push({ card: cardString, message: result.message });
-            console.log(`✅ [${i + 1}/${cards.length}] LIVE: ${cardString}`);
+            console.log(`✅ [${i + 1}/${cards.length}] LIVE [${serverName}]: ${cardString}`);
         } else if (result.status === 'Dead') {
             deadCards.push({ card: cardString, message: result.message });
-            console.log(`❌ [${i + 1}/${cards.length}] DEAD: ${cardString}`);
+            console.log(`❌ [${i + 1}/${cards.length}] DEAD [${serverName}]: ${cardString}`);
         } else {
             errorCards.push({ card: cardString, message: result.message });
-            console.log(`⚠️ [${i + 1}/${cards.length}] ERROR: ${cardString} - ${result.message}`);
+            console.log(`⚠️ [${i + 1}/${cards.length}] ERROR [${serverName}]: ${cardString} - ${result.message}`);
         }
 
         // Update progress every card
@@ -425,9 +436,15 @@ bot.on('callback_query', async (callbackQuery) => {
         await new Promise(resolve => setTimeout(resolve, 1000));
     }
 
-    // Final result
+    // Final result - only show live cards + server stats
     let finalMsg = `⚡ *Kết quả Check Live*\n━━━━━━━━━━━━━━━━━━━━\n`;
-    finalMsg += `📊 Tổng: ${cards.length} | ✅ Live: ${liveCards.length} | ❌ Dead: ${deadCards.length}\n`;
+    finalMsg += `📊 Tổng: ${cards.length} | ✅ Live: ${liveCards.length} | ❌ Dead: ${deadCards.length}\n\n`;
+
+    // Server statistics
+    finalMsg += `🖥 *Server Stats:*\n`;
+    for (const [server, count] of Object.entries(serverStats)) {
+        finalMsg += `  • ${server}: ${count} cards\n`;
+    }
     finalMsg += `━━━━━━━━━━━━━━━━━━━━\n\n`;
 
     if (liveCards.length > 0) {
@@ -435,14 +452,8 @@ bot.on('callback_query', async (callbackQuery) => {
         liveCards.forEach(c => {
             finalMsg += `\`${c.card}\`\n`;
         });
-        finalMsg += `\n`;
-    }
-
-    if (deadCards.length > 0) {
-        finalMsg += `❌ *DEAD CARDS:*\n`;
-        deadCards.forEach(c => {
-            finalMsg += `\`${c.card}\`\n`;
-        });
+    } else {
+        finalMsg += `❌ Không có card nào Live.`;
     }
 
     bot.editMessageText(finalMsg, {
